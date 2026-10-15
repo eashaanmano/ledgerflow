@@ -1,0 +1,7 @@
+node_modules/
+target/
+dist/
+tests/load/results/
+.env
+.DS_Store
+*.log
