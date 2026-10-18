@@ -1,0 +1,50 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: ledger-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/ledger}
+    username: ${DB_USER:ledgerflow}
+    password: ${DB_PASSWORD:ledgerflow}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    redis:
+      enabled: false
+
+ledgerflow:
+  outbox:
+    relay-enabled: ${OUTBOX_RELAY_ENABLED:true}
+    stream: ${EVENTS_STREAM:ledger.events}
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:200}
+    batch-size: 200
+  reconciliation:
+    enabled: ${RECONCILIATION_ENABLED:true}
+    interval-ms: ${RECONCILIATION_INTERVAL_MS:60000}
+
+logging:
+  level:
+    root: INFO
