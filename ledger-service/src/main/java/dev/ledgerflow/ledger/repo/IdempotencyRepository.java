@@ -34,7 +34,7 @@ public class IdempotencyRepository {
 
     public Optional<StoredResponse> find(String clientId, String key) {
         return jdbc.query("""
-                        SELECT request_hash, response_status, response_body::text AS body
+                        SELECT request_hash, response_status, response_body AS body
                         FROM idempotency_keys WHERE client_id = ? AND idempotency_key = ?
                         """,
                 (rs, i) -> new StoredResponse(rs.getString("request_hash"),
@@ -44,7 +44,7 @@ public class IdempotencyRepository {
 
     public void saveResponse(String clientId, String key, int status, String body) {
         jdbc.update("""
-                UPDATE idempotency_keys SET response_status = ?, response_body = ?::jsonb
+                UPDATE idempotency_keys SET response_status = ?, response_body = ?
                 WHERE client_id = ? AND idempotency_key = ?
                 """, status, body, clientId, key);
     }
