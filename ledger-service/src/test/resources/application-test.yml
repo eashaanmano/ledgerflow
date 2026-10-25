@@ -1,0 +1,13 @@
+spring:
+  datasource:
+    url: ${TEST_DB_URL:jdbc:postgresql://localhost:5432/ledger_test}
+    username: ${DB_USER:ledgerflow}
+    password: ${DB_PASSWORD:ledgerflow}
+    hikari:
+      maximum-pool-size: 30
+
+ledgerflow:
+  outbox:
+    relay-enabled: false
+  reconciliation:
+    enabled: false
