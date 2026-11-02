@@ -1,0 +1,146 @@
+name: ledgerflow
+
+x-node-healthcheck: &node-health
+  interval: 5s
+  timeout: 3s
+  retries: 20
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ledgerflow
+      POSTGRES_PASSWORD: ledgerflow
+      POSTGRES_DB: ledger
+    command: ["postgres", "-c", "max_connections=200"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerflow -d ledger"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # AOF so the event stream and consumer-group offsets survive a Redis restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  ledger:
+    build: ./ledger-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/ledger
+      DB_USER: ledgerflow
+      DB_PASSWORD: ledgerflow
+      DB_POOL_SIZE: "30"
+      REDIS_HOST: redis
+      RECONCILIATION_INTERVAL_MS: "30000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
+
+  webhook-service:
+    build: ./webhook-service
+    environment:
+      DATABASE_URL: postgres://ledgerflow:ledgerflow@postgres:5432/webhooks
+      REDIS_URL: redis://redis:6379
+      CONSUMER_NAME: webhook-1
+      MAX_ATTEMPTS: "8"
+      BACKOFF_BASE_MS: "1000"
+      BACKOFF_CAP_MS: "30000"
+      DELIVERY_TIMEOUT_MS: "5000"
+      # Demo only: lets endpoints point at containers on this network (the mock receiver).
+      ALLOW_PRIVATE_URLS: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health | grep -q UP"]
+      <<: *node-health
+
+  mock-receiver:
+    build: ./mock-receiver
+    environment:
+      REDIS_URL: redis://redis:6379
+      MOCK_RECEIVER_SECRET: whsec_demo_receiver_secret
+    depends_on:
+      redis: { condition: service_healthy }
+
+  gateway:
+    build: ./gateway
+    environment:
+      LEDGER_URL: http://ledger:8080
+      WEBHOOKS_URL: http://webhook-service:3001
+      MOCK_RECEIVER_URL: http://mock-receiver:4000
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me-0123456789}
+      # key:clientId:requestsPerSecond:burst
+      API_KEYS: sk_test_demo:demo-client:20:40,sk_test_load:load-client:5000:5000
+    ports:
+      - "3000:3000"
+    depends_on:
+      ledger: { condition: service_healthy }
+      webhook-service: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health | grep -q UP"]
+      <<: *node-health
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "8000:80"
+    depends_on:
+      gateway: { condition: service_healthy }
+
+  # --- tools (not started by `docker compose up`) ---
+
+  ledger-test:
+    profiles: ["test"]
+    image: maven:3.9-eclipse-temurin-21
+    working_dir: /src
+    command: ["mvn", "-B", "test"]
+    environment:
+      TEST_DB_URL: jdbc:postgresql://postgres:5432/ledger_test
+      DB_USER: ledgerflow
+      DB_PASSWORD: ledgerflow
+    volumes:
+      - ./ledger-service:/src
+      - m2:/root/.m2
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  k6:
+    profiles: ["load"]
+    image: grafana/k6:0.54.0
+    environment:
+      BASE_URL: http://gateway:3000
+      API_KEY: sk_test_load
+    volumes:
+      - ./tests/load:/scripts
+    command: ["run", "/scripts/transfers.js"]
+    depends_on:
+      gateway: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:
+  m2:
